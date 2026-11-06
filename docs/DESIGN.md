@@ -69,7 +69,8 @@ Rejected options:
 - **matplotlib 3D**: slow, and its look doesn't fit.
 
 ## 6. Simulation (`catopia/sim.py`, `catopia/genetics.py`)
-- **One workflow run = one night** of 1,440 ticks. The GIF shows the last 120.
+- **One workflow run = one night** of 1,440 ticks, and the workflow runs hourly.
+  A cat's 50–120-night lifespan is therefore about 2–5 real days. The GIF shows the last 120.
   State is saved in `state.json` on the `output` branch, so the world continues
   across runs. The RNG is seeded from (seed, tick), so the same state always
   gives the same future (tested).
@@ -96,7 +97,7 @@ Rejected options:
   - **This week's contributions** raise the nightly refill of food, fish and
     berries, the firefly count, and slightly the birth chance.
   - **Sustained activity** builds up as growth: every 6 points (1 point = a
-    week at 70+ contributions) a new berry bush sprouts, up to 4. That's new habitat.
+    real day at 70+ contributions this week) a new berry bush sprouts, up to 4. That's new habitat.
   - **Streaks**: 3+ days brings a firefly swarm (1.6× fireflies); 7+ days a
     lantern festival with paper lanterns rising, where cats seek each other's
     company.

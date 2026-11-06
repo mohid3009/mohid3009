@@ -86,7 +86,7 @@ def test_rain_keeps_cats_in():
 
 def test_activity_grows_new_bushes_up_to_four():
     s = sim.Sim(fresh(), HAB)
-    for _ in range(40):
+    for _ in range(14 * sim.NIGHTS_PER_DAY):   # two real weeks of max activity
         s.new_day(1.0, 10)           # bushes only change per night, no ticks needed
     assert s.s["bushes"] == 4 and any("berry bush" in e for e in s.s["events"])
 

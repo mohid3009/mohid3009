@@ -1,6 +1,6 @@
 """Agent-based cat ecosystem.
 
-One workflow run = one simulated night of DAY_TICKS ticks. Everything lives in
+One workflow run (hourly) = one simulated night of DAY_TICKS ticks. Everything lives in
 a JSON-ready dict so a night can be saved, reloaded and continued; the RNG is
 re-seeded from (seed, tick) every tick, so the same state always produces the
 same future.
@@ -31,6 +31,7 @@ from pathlib import Path
 from . import genetics as G
 
 DAY_TICKS = 1440
+NIGHTS_PER_DAY = 24       # the workflow runs hourly: one night per real hour
 MIN_CATS, MAX_CATS = 2, 4
 ADULT_AGE = 8
 DIRS = ((1, 0), (-1, 0), (0, 1), (0, -1))
@@ -162,7 +163,7 @@ class Sim:
             self.log({"festival": "a lantern festival", "swarm": "a firefly swarm"}[event] + f" for a {streak}-day streak")
         s["event"] = event
         flies = int(flies * (1.6 if event == "swarm" else 1) * (0.25 if s["weather"] == "rain" else 1))
-        s["growth"] = round(s.get("growth", 0) + energy, 3)
+        s["growth"] = round(s.get("growth", 0) + energy / NIGHTS_PER_DAY, 4)   # paced in real days
         bushes = min(4, 2 + int(s["growth"] // 6))   # sustained activity grows new habitat
         if bushes > s.get("bushes", 2):
             s["bushes"] = bushes
