@@ -23,9 +23,9 @@ from catopia.palette import h32, shade
 SEED = 7
 LOGIN = "mohid3009"
 FRAMES = 120               # 9.6 s loop at 80 ms
-PANEL_H = 66                 # stats strip under the scene
-SIZE = (268, 151 + PANEL_H)  # native px; x3 upscale -> 804x651
-ORIGIN = (SIZE[0] // 2, -44) # crop: meadow + cottage + pond, sky trimmed
+PANEL_H = 60                 # stats strip under the scene
+SIZE = (268, 78 + PANEL_H)   # native px; x3 upscale -> 804x414 banner
+ORIGIN = (SIZE[0] // 2, -105) # scene band centred on the x+y ~ 40 row
 OUT = Path(__file__).parent / "output"
 
 
@@ -71,12 +71,19 @@ def corridor(keys):
     return tiles
 
 
+def on_screen(w, t, margin=22):
+    """Tile centre lands inside the scene band, with room for a cat's height."""
+    sx = ORIGIN[0] + (t[0] - t[1]) * R.A
+    sy = ORIGIN[1] + (t[0] + t[1] + 1) * R.A / 2 - w.H[t] * R.A
+    return margin <= sx <= SIZE[0] - margin and margin <= sy <= SIZE[1] - PANEL_H - 10
+
+
 def find_loop(w, blocked, w_, h_, region):
     """A flat w_ x h_ rectangle of walkable meadow, searched near region."""
     for x, y in sorted(((x, y) for x in range(2, w.n - w_ - 2) for y in range(2, w.n - h_ - 2)),
                        key=lambda c: math.dist(c, region)):
         ring = [(x + i, y + j) for i in range(w_ + 1) for j in range(h_ + 1)]
-        if all(w.land(*c) and w.H[c] == 2 and c not in blocked for c in ring):
+        if all(w.land(*c) and w.H[c] == 2 and c not in blocked and on_screen(w, c) for c in ring):
             return x, y
     raise RuntimeError("no room for a cat loop")
 
@@ -87,10 +94,11 @@ def routes(w):
     c = lambda t: (t[0] + 0.5, t[1] + 0.5)
 
     # Mochi, the explorer: a big lap around the meadow
-    x, y = find_loop(w, pad, 6, 3, (hx + 6, hy - 6))
-    a, b, cc, d = c((x, y)), c((x + 6, y)), c((x + 6, y + 3)), c((x, y + 3))
+    x, y = find_loop(w, pad, 6, 2, (hx + 6, hy - 8))
+    a, b, cc, d = c((x, y)), c((x + 6, y)), c((x + 6, y + 2)), c((x, y + 2))
     mochi = plan([("walk", a, b), ("walk", b, cc), ("sit", cc, (0, 1)), ("walk", cc, d), ("walk", d, a)], speed=0.2)
-    used = pad | corridor(mochi)
+    clearing = {(i, j) for i in range(hx - 2, hx + 5) for j in range(hy - 2, hy + 5)}
+    used = pad | clearing | corridor(mochi)
 
     # Pixel, the homebody: door -> path -> drink at the pond -> home
     pts = [c(t) for t in w.path[-8:]]
@@ -102,8 +110,8 @@ def routes(w):
     used |= corridor(pixel)
 
     # Saffron, the wanderer: out to a lookout spot, a long sit, back again
-    x, y = find_loop(w, used, 4, 4, (hx + 6, hy + 4))
-    p0, p1, p2 = c((x, y)), c((x + 4, y)), c((x + 4, y + 4))
+    x, y = find_loop(w, pad, 5, 1, (hx + 2, hy - 3))   # paths may cross; only the cottage blocks
+    p0, p1, p2 = c((x, y)), c((x + 5, y)), c((x + 5, y + 1))
     saffron = plan([("walk", p0, p1), ("walk", p1, p2), ("sit", p2, (0, 1)), ("walk", p2, p1), ("walk", p1, p0),
                     ("sit", p0, (1, 0))], speed=0.18)
     used |= corridor(saffron)
@@ -124,7 +132,8 @@ def place_static(w, occ, rng):
     for x, y in cells:   # forest on the back ridge and both sides, meadow kept open
         if (x, y) in occ or near_water(x, y) or w.top[x, y] not in ("grass", "stone"):
             continue
-        p = 0.6 if x + y < 15 else 0.45 if abs(x - y) >= 14 else 0.12 if abs(x - y) >= 11 else 0.01
+        front = x + y >= 44   # anything here would stand in front of the cats
+        p = 0.6 if x + y < 32 else 0.45 if abs(x - y) >= 14 else 0 if front else 0.1 if abs(x - y) >= 11 else 0.01
         if rng.random() > p or any(abs(x - a) <= 1 and abs(y - b) <= 1 for a, b, _ in trees):
             continue
         trees.append((x, y, "pine" if w.H[x, y] >= 5 else rng.choice(["oak", "oak", "birch"])))
@@ -234,16 +243,16 @@ def make_hud(stats):
         if not stats:
             R.text(d, 8, top + 30, "GITHUB STATS UNAVAILABLE - SET GITHUB_TOKEN", P.DIM)
             return
-        R.text(d, 8, top + 5, f"@{stats['login']}", P.CREAM)
-        heatmap(d, top + 14, W, stats["days"])
+        R.text(d, 8, top + 3, f"@{stats['login']}", P.CREAM)
+        heatmap(d, top + 11, W, stats["days"])
         blocks = [(f"{stats['total']:,}", "CONTRIBS"), (f"{stats['current_streak']}D", "STREAK"),
                   (f"{stats['longest_streak']}D", "BEST"), (str(stats["repos"]), "REPOS"),
                   (str(stats["stars"]), "STAR" if stats["stars"] == 1 else "STARS"), (str(stats["last7"]), "THIS WEEK")]
         bw = (W - 16) // len(blocks)
         for i, (value, label) in enumerate(blocks):
             cx = 8 + i * bw + bw // 2
-            R.text(d, cx - R.text_width(value, 2) // 2, top + 46, value, P.FIREFLY if label == "THIS WEEK" else P.CREAM, 2)
-            R.text(d, cx - R.text_width(label) // 2, top + 58, label, P.DIM)
+            R.text(d, cx - R.text_width(value, 2) // 2, top + 42, value, P.FIREFLY if label == "THIS WEEK" else P.CREAM, 2)
+            R.text(d, cx - R.text_width(label) // 2, top + 54, label, P.DIM)
     return hud
 
 
@@ -271,7 +280,7 @@ def main():
 
     # fireflies: 8 always, plus one per contribution this week (capped)
     n_flies = 8 + min(32, stats["last7"] if stats else 0)
-    meadow = [(x, y) for x in range(w.n) for y in range(w.n) if w.land(x, y) and 26 <= x + y <= 58 and abs(x - y) <= 14]
+    meadow = [(x, y) for x in range(w.n) for y in range(w.n) if w.land(x, y) and 32 <= x + y <= 50 and abs(x - y) <= 16]
     flies = [(x + rng.random(), y + rng.random(), w.H[x, y] + rng.uniform(0.8, 2.2), rng.randrange(14))
              for x, y in rng.sample(meadow, n_flies)]
 

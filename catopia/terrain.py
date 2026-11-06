@@ -1,8 +1,8 @@
 """Procedural ground: a wide meadow that runs past the frame edges.
 
-Layout: a forested ridge rises toward the back corner (the skyline), the
-middle is an open, mostly flat meadow for the cats, a pond sits right of
-centre and a river drains it toward the front edge.
+Banner layout, everything along one screen row (x+y ~ 40): the cottage on
+the left, open meadow for the cats in the middle, a pond on the right whose
+river drains off toward the right edge. Forest frames the back and sides.
 """
 from dataclasses import dataclass
 
@@ -47,19 +47,19 @@ def generate(seed=7, n=40):
     H = (2 + mounds + np.floor(back ** 1.8 * 4 * (0.6 + 0.6 * value_noise(rng, n, 4)))).astype(int)
 
     wl = 2
-    px, py = c + 4, c
+    px, py = c + 5, c - 3
     water = np.hypot(X - px, Y - py) + (value_noise(rng, n, 3) - 0.5) * 1.6 < 2.8
-    x, y = px, py   # river meanders toward the front (+y) edge
-    while y < n:
+    x, y = px, py   # river meanders toward the +x edge (screen right)
+    while x < n:
         water[x, y] = True
-        if y % 3 == 0 and y > py + 2:
-            x2 = int(np.clip(x + rng.choice([-1, 1]), 1, n - 2))
-            water[x2, y] = True
-            x = x2
-        y += 1
+        if x % 3 == 0 and x > px + 2:
+            y2 = int(np.clip(y + rng.choice([-1, 1]), 1, n - 2))
+            water[x, y2] = True
+            y = y2
+        x += 1
     H[water] = wl
 
-    hx, hy = c - 7, c + 1
+    hx, hy = c - 5, c + 6
     H[hx - 1:hx + 3, hy - 1:hy + 3] = 2
 
     top = np.full((n, n), "grass", dtype=object)
