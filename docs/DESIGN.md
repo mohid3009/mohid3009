@@ -1,0 +1,70 @@
+# CATOPIA — Visual Concept
+
+![preview](../output/preview.png)
+
+## 1. Visual direction
+- **Night only.** A moonlit meadow under a starry sky. The world layer is multiplied
+  by a light field: blue moonlight sets the base level, warm light pools around the
+  cottage window and lanterns, cyan glow comes from bioluminescent mushrooms, and
+  each cat carries a faint moonlit halo so it reads against the dark.
+  Fireflies and stars are emissive overlays drawn after lighting.
+- **Ordinary ground, not a floating island.** A 40×40 map is cropped so the ground
+  runs off the left, right and bottom edges of the frame. A low forested ridge
+  forms the skyline at the back.
+- **Pixel-art isometric**: 2:1 dimetric projection, flat-shaded faces,
+  nearest-neighbour 3x upscale, grass bands, rim highlights and ambient occlusion.
+- **Composition**: forest on the ridge and the frame edges, with a wide open
+  meadow in the middle where the three cats roam.
+- **Git stats**: a footer panel shows your real GitHub data, fetched through the
+  GraphQL API (`catopia/github.py`): a contribution heatmap, total contributions,
+  current and best streak, repos and stars, and this week's count. Your top
+  language appears under the wordmark. This week's contributions also set the
+  number of fireflies (8 + one per contribution, capped at 32 extra). No token and
+  no cache means a "stats unavailable" notice, never invented numbers.
+
+## 2. Cats
+Cats are built from 1/4-block voxels and are about 1.75 blocks long.
+
+| part | detail |
+|---|---|
+| poses | `walk` (2-frame leg cycle, tail sway), `sit`, `sleep` (curled loaf that breathes) |
+| face  | two coloured eye voxels, pink nose, muzzle; closed eyes when asleep |
+| fur   | ginger, black, white, grey, cream, brown |
+| pattern | solid, tabby, tuxedo, socks, siamese points, calico, spotted |
+| eyes  | green, amber, blue |
+
+Fur, pattern and eye colour are plain parameters, so Phase 4 genetics can map
+genes directly to looks.
+
+## 3. Layout (40×40 map, procedural from a seed; about a 34×46-tile window is visible)
+- **Back ridge**: low hills and forest form the skyline.
+- **Left**: the cottage with its lit window, food and water bowls, and a cherry tree.
+- **Centre**: an open meadow with flowers. A lantern-lit path runs to the pond.
+- **Right**: a pond with lily pads and koi, and a river running out of frame.
+- **Cats (3)**: Mochi (ginger tabby) laps the meadow. Pixel (tuxedo) walks the
+  path to drink at the pond. Saffron (calico) wanders to a lookout spot and
+  sits. The routes are hand-planned for now; Phase 3 replaces them with agents.
+
+## 4. Rendering approach
+A custom painter's-algorithm voxel renderer in **Pillow**:
+- Everything is an axis-aligned cube (size 1, 1/2 or 1/4), sorted by centre `x+y+z`.
+- Faces are culled inside each model, so only visible faces become polygons.
+- Cubes that fall outside the frame are skipped.
+- The world is drawn on a transparent layer and multiplied by the light field.
+  Static lights are cached; each cat's moving glow is added per frame, only in a
+  small window around it.
+- **Performance**: 120 frames (a 9.6 s loop) at 804×870 render in about 17 s.
+- **GIF size**: about 0.9 MB. It uses a 255-colour MAXCOVERAGE palette (MEDIANCUT
+  lost small saturated details). Every frame after the first stores only the pixels
+  that changed; everything else is transparent.
+
+## 5. Libraries
+| need | choice | why |
+|---|---|---|
+| drawing, GIF/PNG | **Pillow** | already ubiquitous, fast polygon fill, GIF writer |
+| noise, arrays, lighting | **numpy** | value-noise terrain, sky gradient, light field |
+| GitHub API | stdlib `urllib` | one GraphQL POST; no extra dependency |
+
+Rejected options:
+- **pyrender / moderngl / Blender**: GPU or headless-GL setup on Actions, too heavy for 16 px blocks.
+- **matplotlib 3D**: slow, and its look doesn't fit.

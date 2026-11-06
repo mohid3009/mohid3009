@@ -1,0 +1,52 @@
+name: Update CATOPIA
+
+on:
+  schedule:
+    - cron: "17 3 * * *"   # daily, 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: catopia
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Restore last stats (used only if the GitHub API is unreachable)
+        run: |
+          mkdir -p data
+          git fetch --depth 1 origin output && git show FETCH_HEAD:github.json > data/github.json || rm -f data/github.json
+
+      - name: Render
+        env:
+          # CATOPIA_TOKEN (optional PAT) lets private contributions count;
+          # the built-in token only sees public activity.
+          GITHUB_TOKEN: ${{ secrets.CATOPIA_TOKEN || secrets.GITHUB_TOKEN }}
+        run: python prototype.py
+
+      - name: Publish to the output branch (single commit, no history bloat)
+        run: |
+          pub=$(mktemp -d)
+          cp output/catopia.gif output/preview.png data/github.json "$pub"/
+          git config user.name "mohid3009"
+          git config user.email "74285830+mohid3009@users.noreply.github.com"
+          git checkout --orphan output
+          git rm -rf --quiet .
+          git clean -fdxq
+          cp "$pub"/* .
+          git add -A
+          git commit -qm "CATOPIA $(date -u +%F)"
+          git push --force origin output
