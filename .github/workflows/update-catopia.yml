@@ -25,22 +25,28 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Restore last stats (used only if the GitHub API is unreachable)
+      - name: Restore world state and last stats
         run: |
           mkdir -p data
-          git fetch --depth 1 origin output && git show FETCH_HEAD:github.json > data/github.json || rm -f data/github.json
+          if git fetch --depth 1 origin output; then
+            git show FETCH_HEAD:state.json > data/state.json || rm -f data/state.json
+            git show FETCH_HEAD:github.json > data/github.json || rm -f data/github.json
+          fi
+
+      - name: Test the simulation
+        run: python tests/test_sim.py
 
       - name: Render
         env:
           # CATOPIA_TOKEN (optional PAT) lets private contributions count;
           # the built-in token only sees public activity.
           GITHUB_TOKEN: ${{ secrets.CATOPIA_TOKEN || secrets.GITHUB_TOKEN }}
-        run: python prototype.py
+        run: python run.py
 
       - name: Publish to the output branch (single commit, no history bloat)
         run: |
           pub=$(mktemp -d)
-          cp output/catopia.gif output/preview.png data/github.json "$pub"/
+          cp output/catopia.gif output/preview.png data/github.json data/state.json "$pub"/
           git config user.name "mohid3009"
           git config user.email "74285830+mohid3009@users.noreply.github.com"
           git checkout --orphan output

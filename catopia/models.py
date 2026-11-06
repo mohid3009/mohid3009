@@ -24,7 +24,7 @@ def _box(v, x0, x1, y0, y1, z0, z1, part):
                 v[(x, y, z)] = part
 
 
-def cat(fur, pattern="solid", pose="walk", frame=0, eyes=P.EYES["green"], seed=0):
+def cat(fur, pattern="solid", pose="walk", frame=0, eyes=P.EYES["green"], seed=0, kitten=False):
     parts = {}
     if pose == "walk":
         _box(parts, 0, 4, 0, 2, 1, 2, "body")
@@ -57,6 +57,10 @@ def cat(fur, pattern="solid", pose="walk", frame=0, eyes=P.EYES["green"], seed=0
     parts[nose] = "nose"
     for y in (0, 2):
         parts[(nose[0], y, nose[2])] = "muzzle"
+
+    if kitten:  # shorter body, same big head
+        parts = {(x + 2 if x < 1 else x, y, z): p for (x, y, z), p in parts.items()
+                 if not (x in (1, 2) and p in ("body", "leg"))}
 
     dark = shade(fur, 0.62)
     out = {}

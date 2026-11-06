@@ -1,4 +1,4 @@
-# CATOPIA — Visual Concept
+# CATOPIA — Design
 
 ![preview](../output/preview.png)
 
@@ -41,9 +41,8 @@ genes directly to looks.
 - **Left**: the cottage with its lit window, food and water bowls, and a cherry tree.
 - **Centre**: an open meadow with flowers. A lantern-lit path runs to the pond.
 - **Right**: a pond with lily pads and koi, and a river running out of frame.
-- **Cats (3)**: Mochi (ginger tabby) laps the meadow. Pixel (tuxedo) walks the
-  path to drink at the pond. Saffron (calico) wanders to a lookout spot and
-  sits. The routes are hand-planned for now; Phase 3 replaces them with agents.
+- **Cats' territory**: the visible, walkable part of the meadow. The cats never
+  leave the frame.
 
 ## 4. Rendering approach
 A custom painter's-algorithm voxel renderer in **Pillow**:
@@ -68,3 +67,31 @@ A custom painter's-algorithm voxel renderer in **Pillow**:
 Rejected options:
 - **pyrender / moderngl / Blender**: GPU or headless-GL setup on Actions, too heavy for 16 px blocks.
 - **matplotlib 3D**: slow, and its look doesn't fit.
+
+## 6. Simulation (`catopia/sim.py`, `catopia/genetics.py`)
+- **One workflow run = one night** of 1,440 ticks. The GIF shows the last 120.
+  State is saved in `state.json` on the `output` branch, so the world continues
+  across runs. The RNG is seeded from (seed, tick), so the same state always
+  gives the same future (tested).
+- **Needs** drift every tick: hunger, thirst, energy, loneliness and boredom.
+  Genes set the rates.
+- **Utility AI**: an idle cat scores every action from its needs × genes
+  (eat, drink, sleep, socialise, explore, chase fireflies, idle), picks the
+  best, walks there along a BFS path and performs it. Urgent hunger or thirst
+  interrupts everything except deep sleep.
+- **Food is finite**: the bowl, two berry bushes and the pond's fish stock.
+  Curious cats prefer fishing and catch more.
+- **Genes**: curiosity, sociability, speed, efficiency, territory, longevity,
+  plus fur, pattern and eye colour. A kitten's traits land between its
+  parents' with a gaussian mutation, and its looks come from either parent
+  (8% chance of a new mutation). Genes change behaviour, which is tested: an
+  explorer walks more, and a low-efficiency cat sleeps more.
+- **Population drifts between 2 and 4.** Bonded, content adults (8+ nights
+  old) may have a kitten; the chance rises with room left and food. Cats die
+  of old age (50–120 nights, from the longevity gene) only while more than 2
+  remain, so an elder outlives its lifespan rather than dropping the colony
+  below the floor. Over 240 test nights the colony spent 35 nights at 2 cats,
+  65 at 3 and 140 at 4, and reached generation 8.
+- **GitHub only feeds the world.** This week's contributions raise the
+  nightly refill of food, fish and berries, the firefly count, and slightly
+  the birth chance. They never kill or spawn a cat directly.

@@ -1,15 +1,15 @@
-"""CATOPIA prototype: a night meadow with three cats and live GitHub stats.
+"""CATOPIA: advance the cat ecosystem one night and render the banner.
 
-The cats follow hand-planned routes here (walk, pause, sit, drink) to preview
-the look. Phase 3 replaces the routes with simulated agents; the renderer
-stays the same.
+    python run.py                 # fetch GitHub stats, simulate one night, render
+    python run.py --offline       # use cached data/github.json, no network
+    python run.py --nights 30     # fast-forward 30 nights (renders the last)
+    python run.py --fresh         # ignore saved state, start from the founders
 
-    python prototype.py             -> output/preview.png, output/catopia.gif
-    python prototype.py --offline   -> use cached data/github.json only
+State persists in data/state.json; the workflow keeps it on the output branch.
 """
+import argparse
 import math
 import random
-import sys
 import time
 from datetime import date
 from pathlib import Path
@@ -17,130 +17,56 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from catopia import github, models as M, palette as P, render as R, terrain as T
+from catopia import github, models as M, palette as P, render as R, sim, terrain as T
 from catopia.palette import h32, shade
 
 SEED = 7
 LOGIN = "mohid3009"
-FRAMES = 120               # 9.6 s loop at 80 ms
+FRAMES = 120                 # ticks shown in the GIF (9.6 s at 80 ms)
 PANEL_H = 60                 # stats strip under the scene
 SIZE = (268, 78 + PANEL_H)   # native px; x3 upscale -> 804x414 banner
-ORIGIN = (SIZE[0] // 2, -105) # scene band centred on the x+y ~ 40 row
+ORIGIN = (SIZE[0] // 2, -105)  # scene band centred on the x+y ~ 40 row
 OUT = Path(__file__).parent / "output"
+STATE = Path(__file__).parent / "data" / "state.json"
+
+ZZZ = ["1111", "0010", "0100", "1111"]
+HEART = ["01010", "11111", "01110", "00100"]
+FISH = ["0110", "1111", "0110"]
 
 
-def dominant(dx, dy):
-    return ((1 if dx > 0 else -1), 0) if abs(dx) >= abs(dy) else (0, (1 if dy > 0 else -1))
-
-
-# --- cat routes ------------------------------------------------------------
-def plan(legs, speed=0.17):
-    """legs: ('walk', a, b) / ('sit', pos, facing). Walk time comes from the
-    distance; sits share whatever is left so every route spans FRAMES."""
-    walk = [max(1, round(math.dist(l[1], l[2]) / speed)) for l in legs if l[0] == "walk"]
-    sits = sum(l[0] == "sit" for l in legs)
-    spare = FRAMES - sum(walk)
-    assert spare >= sits, "route too long for the loop"
-    keys, wi, si = [], iter(walk), 0
-    for l in legs:
-        if l[0] == "walk":
-            keys.append((*l, next(wi)))
-        else:
-            si += 1
-            keys.append((*l, spare // sits + (spare % sits if si == sits else 0)))
-    return keys
-
-
-def at(keys, f):
-    for kind, a, b, n in keys:
-        if f < n:
-            if kind == "walk":
-                t = f / n
-                return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t), "walk", dominant(b[0] - a[0], b[1] - a[1])
-            return a, "sit", b
-        f -= n
-
-
-def corridor(keys):
-    tiles = set()
-    for kind, a, b, _ in keys:
-        b = b if kind == "walk" else a
-        for k in range(21):
-            x, y = a[0] + (b[0] - a[0]) * k / 20, a[1] + (b[1] - a[1]) * k / 20
-            tiles |= {(int(x + dx), int(y + dy)) for dx in (-0.7, 0, 0.7) for dy in (-0.7, 0, 0.7)}
-    return tiles
-
-
-def on_screen(w, t, margin=22):
+def on_screen(w, t, margin=20):
     """Tile centre lands inside the scene band, with room for a cat's height."""
     sx = ORIGIN[0] + (t[0] - t[1]) * R.A
     sy = ORIGIN[1] + (t[0] + t[1] + 1) * R.A / 2 - w.H[t] * R.A
     return margin <= sx <= SIZE[0] - margin and margin <= sy <= SIZE[1] - PANEL_H - 10
 
 
-def find_loop(w, blocked, w_, h_, region):
-    """A flat w_ x h_ rectangle of walkable meadow, searched near region."""
-    for x, y in sorted(((x, y) for x in range(2, w.n - w_ - 2) for y in range(2, w.n - h_ - 2)),
-                       key=lambda c: math.dist(c, region)):
-        ring = [(x + i, y + j) for i in range(w_ + 1) for j in range(h_ + 1)]
-        if all(w.land(*c) and w.H[c] == 2 and c not in blocked and on_screen(w, c) for c in ring):
-            return x, y
-    raise RuntimeError("no room for a cat loop")
+def dominant(dx, dy):
+    return ((1 if dx > 0 else -1), 0) if abs(dx) >= abs(dy) else (0, (1 if dy > 0 else -1))
 
 
-def routes(w):
+# --- static scenery + the habitat the agents live in ------------------------
+def build_world(w, rng):
+    scene, shadow, trees, blocked = R.Scene(), {}, [], set()
     hx, hy = w.house
     pad = {(i, j) for i in range(hx - 1, hx + 3) for j in range(hy - 1, hy + 3)}
-    c = lambda t: (t[0] + 0.5, t[1] + 0.5)
-
-    # Mochi, the explorer: a big lap around the meadow
-    x, y = find_loop(w, pad, 6, 2, (hx + 6, hy - 8))
-    a, b, cc, d = c((x, y)), c((x + 6, y)), c((x + 6, y + 2)), c((x, y + 2))
-    mochi = plan([("walk", a, b), ("walk", b, cc), ("sit", cc, (0, 1)), ("walk", cc, d), ("walk", d, a)], speed=0.2)
     clearing = {(i, j) for i in range(hx - 2, hx + 5) for j in range(hy - 2, hy + 5)}
-    used = pad | clearing | corridor(mochi)
-
-    # Pixel, the homebody: door -> path -> drink at the pond -> home
-    pts = [c(t) for t in w.path[-8:]]
-    last = w.path[-1]
-    to_water = next((dx, dy) for dx, dy in ((1, 0), (0, 1), (-1, 0), (0, -1)) if w.water[last[0] + dx, last[1] + dy])
-    legs = [("walk", p, q) for p, q in zip(pts, pts[1:])]
-    back = [("walk", q, p) for p, q in reversed(list(zip(pts, pts[1:])))]
-    pixel = plan(legs + [("sit", pts[-1], to_water)] + back + [("sit", pts[0], (0, 1))], speed=0.2)
-    used |= corridor(pixel)
-
-    # Saffron, the wanderer: out to a lookout spot, a long sit, back again
-    x, y = find_loop(w, pad, 5, 1, (hx + 2, hy - 3))   # paths may cross; only the cottage blocks
-    p0, p1, p2 = c((x, y)), c((x + 5, y)), c((x + 5, y + 1))
-    saffron = plan([("walk", p0, p1), ("walk", p1, p2), ("sit", p2, (0, 1)), ("walk", p2, p1), ("walk", p1, p0),
-                    ("sit", p0, (1, 0))], speed=0.18)
-    used |= corridor(saffron)
-
-    cats = [(("ginger", "tabby", "green", 1), mochi), (("black", "tuxedo", "amber", 2), pixel),
-            (("white", "calico", "amber", 5), saffron)]
-    return cats, used
-
-
-# --- static scenery --------------------------------------------------------
-def place_static(w, occ, rng):
-    scene, shadow, trees = R.Scene(), {}, []
-    hx, hy = w.house
+    blocked |= pad
     near_water = lambda x, y: any(w.water[min(max(x + i, 0), w.n - 1), min(max(y + j, 0), w.n - 1)]
                                   for i in (-1, 0, 1) for j in (-1, 0, 1))
     cells = [(x, y) for x in range(w.n) for y in range(w.n)]
     rng.shuffle(cells)
     for x, y in cells:   # forest on the back ridge and both sides, meadow kept open
-        if (x, y) in occ or near_water(x, y) or w.top[x, y] not in ("grass", "stone"):
+        if (x, y) in clearing or near_water(x, y) or w.top[x, y] not in ("grass", "stone"):
             continue
         front = x + y >= 44   # anything here would stand in front of the cats
         p = 0.6 if x + y < 32 else 0.45 if abs(x - y) >= 14 else 0 if front else 0.1 if abs(x - y) >= 11 else 0.01
         if rng.random() > p or any(abs(x - a) <= 1 and abs(y - b) <= 1 for a, b, _ in trees):
             continue
         trees.append((x, y, "pine" if w.H[x, y] >= 5 else rng.choice(["oak", "oak", "birch"])))
-    if (hx + 3, hy - 2) not in occ:
-        trees.append((hx + 3, hy - 2, "cherry"))
+    trees.append((hx + 3, hy - 2, "cherry"))
     for x, y, kind in trees:
-        occ.add((x, y))
+        blocked.add((x, y))
         for (dx, dy), f in {(0, 0): 0.72, (1, 0): 0.8, (0, 1): 0.9, (1, 1): 0.88}.items():
             shadow[(x + dx, y + dy)] = shadow.get((x + dx, y + dy), 1.0) * f
         scene.model(M.TREES[kind](h32(x, y)), x + 0.5, y + 0.5, w.H[x, y], 0.5)
@@ -152,13 +78,15 @@ def place_static(w, occ, rng):
     scene.light(hx + 2.3, hy + 1, z0 + 0.7, 2.4, P.LAMP, 1.2)       # window glow
     scene.model(M.bowl(), hx + 2.4, hy + 1.3, z0, 0.25)
     scene.model(M.bowl(P.WATER_SHALLOW), hx + 2.4, hy + 1.9, z0, 0.25)
+    cushion = (hx + 3, hy - 1)
+    scene.model(M.cushion(), cushion[0] + 0.5, cushion[1] + 0.5, w.H[cushion], 0.25)
 
     for i in (0, len(w.path) // 2, len(w.path) - 1):   # lanterns along the path
         px, py = w.path[i]
         for dx, dy in ((0, -1), (1, 0), (-1, 0), (0, 1)):
             t = (px + dx, py + dy)
-            if w.land(*t) and t not in occ and w.top[t] != "path":
-                occ.add(t)
+            if w.land(*t) and t not in blocked and t != cushion and w.top[t] != "path":
+                blocked.add(t)
                 scene.model(M.lantern(), t[0] + 0.5, t[1] + 0.5, w.H[t], 0.25)
                 scene.light(t[0] + 0.5, t[1] + 0.5, w.H[t] + 1.5, 2.2, P.LAMP, 0.9)
                 break
@@ -166,13 +94,21 @@ def place_static(w, occ, rng):
     for x, y in [(x, y) for x in range(w.n) for y in range(w.n) if w.water[x, y]][::5]:
         scene.model(M.lily(h32(x, y)), x + 0.5, y + 0.5, w.wl - 0.2, 0.25)
 
+    bushes = []  # berry bushes: a food source inside the meadow
+    for x, y in cells:
+        if len(bushes) < 2 and on_screen(w, (x, y), 30) and w.land(x, y) and w.top[x, y] == "grass" \
+                and (x, y) not in clearing | blocked and all(abs(x - a) + abs(y - b) > 6 for a, b in bushes):
+            bushes.append((x, y))
+            blocked.add((x, y))
+            scene.model(M.berry_bush(h32(x, y)), x + 0.5, y + 0.5, w.H[x, y], 0.25)
+
     shrooms = 0
     for x, y in cells:  # small props on tiles nobody uses
-        if (x, y) in occ or not w.land(x, y) or w.top[x, y] not in ("grass", "stone"):
+        if (x, y) in blocked or (x, y) == cushion or not w.land(x, y) or w.top[x, y] not in ("grass", "stone"):
             continue
         r = rng.random()
         z = w.H[x, y]
-        near_tree = any((x + i, y + j) in occ for i in (-1, 0, 1) for j in (-1, 0, 1))
+        near_tree = any((x + i, y + j) in blocked for i in (-1, 0, 1) for j in (-1, 0, 1))
         if near_tree and r < 0.06 and shrooms < 5:
             shrooms += 1
             scene.model(M.glow_shroom(h32(x, y)), x + 0.5, y + 0.5, z, 0.25)
@@ -180,22 +116,49 @@ def place_static(w, occ, rng):
         elif r < 0.16:
             scene.model(M.flowers(h32(x, y, 1)), x + 0.5, y + 0.5, z, 0.25)
         elif r < 0.18:
+            blocked.add((x, y))
             scene.model(M.rock(h32(x, y)), x + 0.5, y + 0.5, z, 0.25)
-    return scene
+
+    # the cats' territory: visible, walkable meadow, largest connected patch
+    walk = {(x, y) for x in range(w.n) for y in range(w.n)
+            if w.land(x, y) and (x, y) not in blocked and on_screen(w, (x, y))}
+    start = max(walk, key=lambda t: sum((t[0] + d[0], t[1] + d[1]) in walk for d in sim.DIRS))
+    seen, todo = {start}, [start]
+    while todo:
+        t = todo.pop()
+        for d in sim.DIRS:
+            n = (t[0] + d[0], t[1] + d[1])
+            if n in walk and n not in seen:
+                seen.add(n)
+                todo.append(n)
+    walk = seen
+    stand_by = lambda t: next(((t[0] + dx, t[1] + dy), (-dx, -dy)) for dx, dy in sim.DIRS
+                              if (t[0] + dx, t[1] + dy) in walk)
+    shore = [(t, d) for t in sorted(walk) for d in sim.DIRS if w.water[t[0] + d[0], t[1] + d[1]]]
+    hab = sim.Habitat(walk, shore, ((hx + 3, hy + 1), (-1, 0)), (cushion, (0, 1)),
+                      {f"{x},{y}": stand_by((x, y)) for x, y in bushes})
+    assert cushion in walk and (hx + 3, hy + 1) in walk and shore, "layout lost a point of interest"
+    return scene, hab
 
 
-# --- per-frame -------------------------------------------------------------
-def dynamic(w, cats, flies, f):
+# --- per frame ---------------------------------------------------------------
+def dynamic(w, snap, f):
     s = R.Scene()
-    for (fur, pattern, eyes, seed), keys in cats:
-        (x, y), pose, facing = at(keys, f)
-        z = w.H[int(x), int(y)]
+    marks = []
+    for c in snap["cats"]:
+        g, x, y = c["genes"], c["x"], c["y"]
+        z = w.H[int(x), int(y)] + c["lift"]
         s.light(x, y, z + 0.5, 1.1, (190, 200, 255), 0.45, dynamic=True)   # moonlit fur
-        s.flat(x, y, z, 0.42, shade(T.top_color(w, int(x), int(y)), 0.7))
-        s.model(M.cat(P.FUR[fur], pattern, pose, f // 2 if pose == "walk" else f // 9, P.EYES[eyes], seed),
-                x, y, z, 0.25, facing)
+        if not c["lift"]:
+            s.flat(x, y, z, 0.42 if not c["kitten"] else 0.3, shade(T.top_color(w, int(x), int(y)), 0.7))
+        anim = snap["tick"] // 2 if c["pose"] == "walk" else snap["tick"] // 9
+        s.model(M.cat(P.FUR[g["fur"]], g["pattern"], c["pose"], anim, P.EYES[g["eyes"]], c["id"], c["kitten"]),
+                x, y, z, 0.25, c["facing"])
+        if c["overlay"]:
+            marks.append((c["overlay"], x, y, z))
 
-    pond = [(x, y) for x in range(w.n) for y in range(w.n) if w.water[x, y] and y < w.n // 2 + 4]
+    pond = [(x, y) for x in range(w.n) for y in range(w.n) if w.water[x, y]]
+    pond = [p for p in pond if abs(p[1] - w.n // 2 + 3) < 4 and abs(p[0] - w.n // 2 - 5) < 4]
     mx = sum(p[0] for p in pond) / len(pond) + 0.5
     my = sum(p[1] for p in pond) / len(pond) + 0.5
     a = f / FRAMES * 2 * math.pi
@@ -205,17 +168,27 @@ def dynamic(w, cats, flies, f):
         if w.water[int(kx), int(ky)]:
             s.model(M.koi(i), kx, ky, w.wl - 0.2, 0.25, dominant(-sgn * math.sin(b), sgn * math.cos(b)))
 
-    def fireflies(d, proj, frame):
+    flies = snap["flies"]
+
+    def overlay(d, proj, frame):
         for i, (x, y, z, ph) in enumerate(flies):
             if (frame + ph) % 14 >= 9:   # blink off
                 continue
-            t = frame / FRAMES * 2 * math.pi
-            sx, sy = proj(x + 0.4 * math.sin(t + ph), y + 0.4 * math.cos(2 * t + ph), z + 0.25 * math.sin(3 * t + i))
+            sx, sy = proj(x, y, w.H[min(int(x), w.n - 1), min(int(y), w.n - 1)] + z)
             for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 d.point((sx + dx, sy + dy), fill=shade(P.FIREFLY, 0.45))
             d.point((sx, sy), fill=P.FIREFLY)
+        for kind, x, y, z in marks:
+            sx, sy = proj(x, y, z + 1.7)
+            if kind == "zzz":
+                rise = frame % 12
+                R.sprite(d, sx + 3 + rise // 4, sy - rise // 2, ZZZ, P.CREAM)
+            elif kind == "heart":
+                R.sprite(d, sx - 2, sy - (frame // 3) % 3, HEART, P.HEART)
+            else:
+                R.sprite(d, sx - 2, sy, FISH, P.KOI[0])
 
-    s.overlays.append(fireflies)
+    s.overlays.append(overlay)
     return s
 
 
@@ -234,12 +207,14 @@ def heatmap(d, y0, W, days, pitch=4):
         d.rectangle([x, y, x + pitch - 2, y + pitch - 2], fill=P.HEAT[lvl])
 
 
-def make_hud(stats):
+def make_hud(stats, world):
     def hud(d, size):
         W, H = size
         top = H - PANEL_H
         d.rectangle([0, top, W - 1, H - 1], fill=P.PANEL)
         d.line([(0, top), (W - 1, top)], fill=P.PANEL_EDGE)
+        info = f"NIGHT {world['day']} · GEN {world['gen']} · {world['cats']} CATS"
+        R.text(d, W - 8 - R.text_width(info), top + 3, info, P.DIM)
         if not stats:
             R.text(d, 8, top + 30, "GITHUB STATS UNAVAILABLE - SET GITHUB_TOKEN", P.DIM)
             return
@@ -270,27 +245,45 @@ def save_gif(frames, path):
                 transparency=255, disposal=1, optimize=False)
 
 
+def environment(stats):
+    """Recent GitHub activity -> food/fish/berry refill and firefly count.
+    Without stats the world still runs on its baseline."""
+    last7 = stats["last7"] if stats else 0
+    return min(1.0, last7 / 70), 8 + min(32, last7)
+
+
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--offline", action="store_true")
+    ap.add_argument("--nights", type=int, default=1)
+    ap.add_argument("--fresh", action="store_true")
+    args = ap.parse_args()
+
     t0 = time.time()
-    stats = github.load(LOGIN, refresh="--offline" not in sys.argv)
+    stats = github.load(LOGIN, refresh=not args.offline)
     w = T.generate(SEED)
-    rng = random.Random(SEED)
-    cats, occ = routes(w)
-    static = place_static(w, occ, rng)
+    static, hab = build_world(w, random.Random(SEED))
+    state = (None if args.fresh else sim.load(STATE)) or sim.new_state(SEED, hab)
+    world = sim.Sim(state, hab)
+    energy, flies = environment(stats)
+    for night in range(args.nights):
+        world.new_day(energy, flies)
+        last = night == args.nights - 1
+        snaps = world.run(sim.DAY_TICKS, record=FRAMES if last else 0)
+    sim.save(state, STATE)
 
-    # fireflies: 8 always, plus one per contribution this week (capped)
-    n_flies = 8 + min(32, stats["last7"] if stats else 0)
-    meadow = [(x, y) for x in range(w.n) for y in range(w.n) if w.land(x, y) and 32 <= x + y <= 50 and abs(x - y) <= 16]
-    flies = [(x + rng.random(), y + rng.random(), w.H[x, y] + rng.uniform(0.8, 2.2), rng.randrange(14))
-             for x, y in rng.sample(meadow, n_flies)]
-
-    hud = make_hud(stats)
-    frames = [R.render(static.merged(dynamic(w, cats, flies, f)), SIZE, ORIGIN, f, hud) for f in range(FRAMES)]
+    hud = make_hud(stats, world.summary())
+    frames = [R.render(static.merged(dynamic(w, snap, f)), SIZE, ORIGIN, f, hud) for f, snap in enumerate(snaps)]
     OUT.mkdir(exist_ok=True)
     frames[0].save(OUT / "preview.png", optimize=True)
     save_gif(frames, OUT / "catopia.gif")
-    print(f"{SIZE[0] * R.UPSCALE}x{SIZE[1] * R.UPSCALE}, {FRAMES} frames, {time.time() - t0:.1f}s, "
-          f"gif {(OUT / 'catopia.gif').stat().st_size // 1024} KB, fireflies {n_flies}")
+
+    print(f"night {state['day']}: " + ", ".join(
+        f"{c['name']} (gen {c['gen']}, {c['age']}n, {sim.G.personality(c['genes'])})" for c in state["cats"]))
+    for e in state["events"][-5:]:
+        print("  " + e)
+    print(f"{SIZE[0] * R.UPSCALE}x{SIZE[1] * R.UPSCALE}, {len(frames)} frames, {time.time() - t0:.1f}s, "
+          f"gif {(OUT / 'catopia.gif').stat().st_size // 1024} KB")
 
 
 if __name__ == "__main__":
