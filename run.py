@@ -64,7 +64,6 @@ def build_world(w, rng, n_bushes=2, lang=None, n_dens=0):
         if rng.random() > p or any(abs(x - a) <= 1 and abs(y - b) <= 1 for a, b, _ in trees):
             continue
         trees.append((x, y, "pine" if w.H[x, y] >= 5 else rng.choice(["oak", "oak", "birch"])))
-    trees.append((hx + 3, hy - 2, "cherry"))
     for x, y, kind in trees:
         blocked.add((x, y))
         for (dx, dy), f in {(0, 0): 0.72, (1, 0): 0.8, (0, 1): 0.9, (1, 1): 0.88}.items():
@@ -80,16 +79,6 @@ def build_world(w, rng, n_bushes=2, lang=None, n_dens=0):
     scene.model(M.bowl(P.WATER_SHALLOW), hx + 2.4, hy + 1.9, z0, 0.25)
     cushion = (hx + 3, hy - 1)
     scene.model(M.cushion(), cushion[0] + 0.5, cushion[1] + 0.5, w.H[cushion], 0.25)
-
-    for i in (0, len(w.path) // 2, len(w.path) - 1):   # lanterns along the path
-        px, py = w.path[i]
-        for dx, dy in ((0, -1), (1, 0), (-1, 0), (0, 1)):
-            t = (px + dx, py + dy)
-            if w.land(*t) and t not in blocked and t != cushion and w.top[t] != "path":
-                blocked.add(t)
-                scene.model(M.lantern(), t[0] + 0.5, t[1] + 0.5, w.H[t], 0.25)
-                scene.light(t[0] + 0.5, t[1] + 0.5, w.H[t] + 1.5, 2.2, P.LAMP, 0.9)
-                break
 
     for x, y in [(x, y) for x in range(w.n) for y in range(w.n) if w.water[x, y]][::5]:
         scene.model(M.lily(h32(x, y)), x + 0.5, y + 0.5, w.wl - 0.2, 0.25)
