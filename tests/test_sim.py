@@ -71,6 +71,26 @@ def test_genes_drive_behaviour():
     assert walked[100] > walked[101] and slept[101] > slept[100], (walked, slept)
 
 
+def test_rain_keeps_cats_in():
+    def walking(weather):
+        s = sim.Sim(fresh(), HAB)
+        s.new_day(0.5, 10)
+        s.s["weather"] = weather
+        n = 0
+        for _ in range(sim.DAY_TICKS):
+            s.step()
+            n += sum(c["pose"] == "walk" for c in s.cats)
+        return n
+    assert walking("rain") < walking("clear") * 0.85
+
+
+def test_activity_grows_new_bushes_up_to_four():
+    s = sim.Sim(fresh(), HAB)
+    for _ in range(40):
+        s.new_day(1.0, 10)           # bushes only change per night, no ticks needed
+    assert s.s["bushes"] == 4 and any("berry bush" in e for e in s.s["events"])
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

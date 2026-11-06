@@ -186,8 +186,9 @@ def night_sky(w, h, frame):
     return img
 
 
-def render(scene, size, origin, frame=0, hud=None):
-    """Draw one frame at native resolution, light it, upscale for crisp pixels."""
+def render(scene, size, origin, frame=0, hud=None, fog=0.0, dim=1.0):
+    """Draw one frame at native resolution, light it, upscale for crisp pixels.
+    fog: 0..1 mist strength (thickest at the back); dim: light multiplier (rain)."""
     W, H = size
     world = Image.new("RGBA", size, (0, 0, 0, 0))
     d = ImageDraw.Draw(world)
@@ -203,7 +204,10 @@ def render(scene, size, origin, frame=0, hud=None):
         field = field.copy()
         for light in scene.dyn_lights:
             add_light(field, origin, light)
-    arr[..., :3] *= np.minimum(field, 1.25)
+    arr[..., :3] *= np.minimum(field, 1.25) * dim
+    if fog:
+        k = fog * (1 - 0.6 * np.linspace(0, 1, H))[:, None, None]
+        arr[..., :3] = arr[..., :3] * (1 - k) + np.array(P.FOG, np.float32) * k
     world = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
     img = night_sky(W, H, frame)
     img.paste(world, (0, 0), world)

@@ -92,6 +92,27 @@ Rejected options:
   remain, so an elder outlives its lifespan rather than dropping the colony
   below the floor. Over 240 test nights the colony spent 35 nights at 2 cats,
   65 at 3 and 140 at 4, and reached generation 8.
-- **GitHub only feeds the world.** This week's contributions raise the
-  nightly refill of food, fish and berries, the firefly count, and slightly
-  the birth chance. They never kill or spawn a cat directly.
+- **GitHub only feeds the world.** It never kills or spawns a cat directly.
+  - **This week's contributions** raise the nightly refill of food, fish and
+    berries, the firefly count, and slightly the birth chance.
+  - **Sustained activity** builds up as growth: every 6 points (1 point = a
+    week at 70+ contributions) a new berry bush sprouts, up to 4. That's new habitat.
+  - **Streaks**: 3+ days brings a firefly swarm (1.6× fireflies); 7+ days a
+    lantern festival with paper lanterns rising, where cats seek each other's
+    company.
+  - **Top language** colours the meadow's flowers (Python: yellow and blue).
+- **Weather** is rolled each night: about 70% clear, 15% fog and 15% rain.
+  - **Fog** mists the back of the scene, and cats stay near home.
+  - **Rain** dims the light and adds falling streaks. Cats explore less and nap
+    or hunker down more (tested), and most fireflies hide.
+- **Tests** (`tests/`), run by the Action before every render:
+  - same seed gives the same result
+  - save/reload continuity
+  - population stays between 2 and 4, with births and deaths
+  - genes change behaviour
+  - rain keeps cats in
+  - activity grows bushes
+  - banner size and deterministic rendering
+  - cats actually drawn
+  - weather changes the picture
+  - GIF round-trip accuracy

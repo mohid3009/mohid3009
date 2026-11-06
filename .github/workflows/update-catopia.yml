@@ -33,8 +33,8 @@ jobs:
             git show FETCH_HEAD:github.json > data/github.json || rm -f data/github.json
           fi
 
-      - name: Test the simulation
-        run: python tests/test_sim.py
+      - name: Test the simulation and renderer
+        run: python tests/test_sim.py && python tests/test_render.py
 
       - name: Render
         env:

@@ -14,7 +14,13 @@ naps, who seeks company all falls out of the numbers.
 Population drifts between MIN_CATS and MAX_CATS: bonded, content adults may
 have a kitten while there is room; old cats die of age only while the
 population stays above the floor (an elder outlives its lifespan otherwise).
-GitHub activity only refills food; it never kills or spawns cats.
+GitHub activity only feeds the world (food refill, fireflies, slow growth
+of new berry bushes, streak events); it never kills or spawns cats.
+
+Each night also rolls weather. Rain sends cats to nap and huddle instead of
+roaming; fog keeps them near home. Streak events: a 3+ day contribution
+streak brings a firefly swarm, 7+ days a lantern festival that draws cats
+together.
 """
 import json
 import math
@@ -102,7 +108,8 @@ def new_cat(state, name, genes, gen, parents, age, x, y):
 def new_state(seed, hab):
     rng = random.Random(f"{seed}:genesis")
     state = {"version": 1, "seed": seed, "day": 0, "tick": 0, "next_id": 1, "cats": [], "lineage": {},
-             "events": [], "res": {"bowl": 3, "fish": 8, "berries": {k: 3 for k in hab.bushes}}, "flies": []}
+             "events": [], "res": {"bowl": 3, "fish": 8, "berries": {k: 3 for k in hab.bushes}}, "flies": [],
+             "weather": "clear", "event": None, "growth": 0.0, "bushes": 2}
     for name, age, genes in FOUNDERS:
         t = rng.choice(hab.tiles)
         new_cat(state, name, dict(genes), 1, [], age, t[0] + 0.5, t[1] + 0.5)
@@ -124,6 +131,10 @@ class Sim:
     def __init__(self, state, hab):
         self.s = state
         self.hab = hab
+        for k, v in (("weather", "clear"), ("event", None), ("growth", 0.0), ("bushes", 2)):
+            state.setdefault(k, v)    # saves from older versions
+        for k in hab.bushes:      # bushes that sprouted since the last run
+            state["res"]["berries"].setdefault(k, 2)
         for c in state["cats"]:   # layout may have changed since the save
             if (int(c["x"]), int(c["y"])) not in hab.walkable:
                 t = hab.nearest(c["x"], c["y"])
@@ -137,12 +148,24 @@ class Sim:
         self.s["events"] = (self.s["events"] + [f"night {self.s['day']}: {text}"])[-30:]
 
     # --- once per night ------------------------------------------------------
-    def new_day(self, energy=0.3, flies=8):
-        """energy in [0, 1] comes from recent GitHub activity; it only feeds
-        the world (food, fish, berries, fireflies)."""
+    def new_day(self, energy=0.3, flies=8, streak=0):
+        """energy in [0, 1] and streak (days) come from GitHub activity; they
+        only feed the world (food, fish, berries, fireflies, events)."""
         s = self.s
         rng = random.Random(f"{s['seed']}:day:{s['day']}")
         s["day"] += 1
+        r = rng.random()
+        s["weather"] = "rain" if r < 0.15 else "fog" if r < 0.30 else "clear"
+        event = "festival" if streak >= 7 else "swarm" if streak >= 3 else None
+        if event and event != s.get("event"):
+            self.log({"festival": "a lantern festival", "swarm": "a firefly swarm"}[event] + f" for a {streak}-day streak")
+        s["event"] = event
+        flies = int(flies * (1.6 if event == "swarm" else 1) * (0.25 if s["weather"] == "rain" else 1))
+        s["growth"] = round(s.get("growth", 0) + energy, 3)
+        bushes = min(4, 2 + int(s["growth"] // 6))   # sustained activity grows new habitat
+        if bushes > s.get("bushes", 2):
+            s["bushes"] = bushes
+            self.log("a new berry bush sprouted")
         for c in self.cats:
             c["age"] += 1
             c["act"] = None
@@ -241,6 +264,17 @@ class Sim:
             "play": c["boredom"] * g["curiosity"] * 0.6 if self.s["flies"] else 0,
             "idle": 0.12,
         }
+        weather = self.s.get("weather")
+        if weather == "rain":      # nap and huddle instead of roaming
+            u["explore"] *= 0.3
+            u["idle"] += 0.12   # hunker down where they are
+            u["play"] *= 0.3
+            u["sleep"] += 0.15 if c["energy"] < 0.9 else 0
+            u["social"] *= 1.3
+        elif weather == "fog":
+            u["explore"] *= 0.7
+        if self.s.get("event") == "festival":
+            u["social"] += 0.15 * g["sociability"]
         for k in u:
             u[k] += rng.uniform(0, 0.04)
         kind = max(u, key=u.get)
@@ -266,7 +300,7 @@ class Sim:
                 stand = min(spots, key=lambda t: self._dist(c, t))
                 return self._go(c, "social", stand, dominant(ot[0] - stand[0], ot[1] - stand[1]), 60, other=o["id"])
         if kind == "explore":
-            if rng.random() < g["territory"]:
+            if rng.random() < max(g["territory"], 0.7 if weather == "fog" else 0):
                 near = [t for t in self.hab.tiles if abs(t[0] - c["home"][0]) + abs(t[1] - c["home"][1]) <= 3]
                 stand = rng.choice(near or self.hab.tiles)
             else:
@@ -331,7 +365,9 @@ class Sim:
         c["pose"] = "sleep" if a["kind"] == "sleep" else "sit"
         self._effect(c, a)
         a["dur"] -= 1
-        if a["dur"] <= 0 or (a["kind"] == "sleep" and c["energy"] >= 0.97):
+        if a["kind"] == "sleep":
+            a["slept"] = a.get("slept", 0) + 1
+        if a["dur"] <= 0 or (a["kind"] == "sleep" and c["energy"] >= 0.97 and a["slept"] >= 60):
             c["act"] = None
 
     def _arrive(self, c, a, rng):
@@ -389,4 +425,5 @@ class Sim:
         return {"tick": self.s["tick"], "cats": cats, "flies": [list(f) for f in self.s["flies"]]}
 
     def summary(self):
-        return {"day": self.s["day"], "cats": len(self.cats), "gen": max((c["gen"] for c in self.cats), default=0)}
+        return {"day": self.s["day"], "cats": len(self.cats), "gen": max((c["gen"] for c in self.cats), default=0),
+                "weather": self.s.get("weather", "clear"), "event": self.s.get("event")}

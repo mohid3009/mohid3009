@@ -46,7 +46,7 @@ def dominant(dx, dy):
 
 
 # --- static scenery + the habitat the agents live in ------------------------
-def build_world(w, rng):
+def build_world(w, rng, n_bushes=2, lang=None):
     scene, shadow, trees, blocked = R.Scene(), {}, [], set()
     hx, hy = w.house
     pad = {(i, j) for i in range(hx - 1, hx + 3) for j in range(hy - 1, hy + 3)}
@@ -96,12 +96,13 @@ def build_world(w, rng):
 
     bushes = []  # berry bushes: a food source inside the meadow
     for x, y in cells:
-        if len(bushes) < 2 and on_screen(w, (x, y), 30) and w.land(x, y) and w.top[x, y] == "grass" \
+        if len(bushes) < n_bushes and on_screen(w, (x, y), 30) and w.land(x, y) and w.top[x, y] == "grass" \
                 and (x, y) not in clearing | blocked and all(abs(x - a) + abs(y - b) > 6 for a, b in bushes):
             bushes.append((x, y))
             blocked.add((x, y))
             scene.model(M.berry_bush(h32(x, y)), x + 0.5, y + 0.5, w.H[x, y], 0.25)
 
+    flower_colors = P.LANG_FLOWERS[lang] + [P.FLOWERS[3]] if lang in P.LANG_FLOWERS else P.FLOWERS
     shrooms = 0
     for x, y in cells:  # small props on tiles nobody uses
         if (x, y) in blocked or (x, y) == cushion or not w.land(x, y) or w.top[x, y] not in ("grass", "stone"):
@@ -114,7 +115,7 @@ def build_world(w, rng):
             scene.model(M.glow_shroom(h32(x, y)), x + 0.5, y + 0.5, z, 0.25)
             scene.light(x + 0.5, y + 0.5, z + 0.3, 0.9, P.GLOW_CAP, 0.5)
         elif r < 0.16:
-            scene.model(M.flowers(h32(x, y, 1)), x + 0.5, y + 0.5, z, 0.25)
+            scene.model(M.flowers(h32(x, y, 1), flower_colors), x + 0.5, y + 0.5, z, 0.25)
         elif r < 0.18:
             blocked.add((x, y))
             scene.model(M.rock(h32(x, y)), x + 0.5, y + 0.5, z, 0.25)
@@ -142,7 +143,7 @@ def build_world(w, rng):
 
 
 # --- per frame ---------------------------------------------------------------
-def dynamic(w, snap, f):
+def dynamic(w, snap, f, weather="clear", event=None):
     s = R.Scene()
     marks = []
     for c in snap["cats"]:
@@ -187,6 +188,21 @@ def dynamic(w, snap, f):
                 R.sprite(d, sx - 2, sy - (frame // 3) % 3, HEART, P.HEART)
             else:
                 R.sprite(d, sx - 2, sy, FISH, P.KOI[0])
+        band = SIZE[1] - PANEL_H
+        if event == "festival":   # paper lanterns drifting up for a 7+ day streak
+            for i in range(7):
+                ph = i * 37
+                lx = 20 + (i * 41 + 13) % 228 + round(3 * math.sin((frame + ph) / 9))
+                ly = band - int((frame * 0.6 + ph) % (band + 20))
+                for gx, gy in ((-2, 1), (3, 1), (0, -2), (1, -2), (0, 4), (1, 4)):
+                    d.point((lx + gx, ly + gy), fill=shade(P.LAMP, 0.6))   # soft glow
+                d.rectangle([lx - 1, ly - 1, lx + 2, ly + 3], fill=P.LAMP)
+                d.rectangle([lx, ly, lx + 1, ly + 1], fill=P.CREAM)
+        if weather == "rain":
+            rng = random.Random(frame)
+            for _ in range(70):
+                rx, ry = rng.randrange(SIZE[0]), rng.randrange(band)
+                d.line([(rx, ry), (rx - 1, min(ry + 4, band - 1))], fill=P.RAIN)
 
     s.overlays.append(overlay)
     return s
@@ -213,7 +229,9 @@ def make_hud(stats, world):
         top = H - PANEL_H
         d.rectangle([0, top, W - 1, H - 1], fill=P.PANEL)
         d.line([(0, top), (W - 1, top)], fill=P.PANEL_EDGE)
-        info = f"NIGHT {world['day']} · GEN {world['gen']} · {world['cats']} CATS"
+        extra = [world["weather"].upper()] if world["weather"] != "clear" else []
+        extra += [{"festival": "LANTERN FESTIVAL", "swarm": "FIREFLY SWARM"}[world["event"]]] if world["event"] else []
+        info = " · ".join([f"NIGHT {world['day']}", f"GEN {world['gen']}", f"{world['cats']} CATS"] + extra)
         R.text(d, W - 8 - R.text_width(info), top + 3, info, P.DIM)
         if not stats:
             R.text(d, 8, top + 30, "GITHUB STATS UNAVAILABLE - SET GITHUB_TOKEN", P.DIM)
@@ -232,9 +250,14 @@ def make_hud(stats, world):
 
 
 def save_gif(frames, path):
-    """255-colour palette (MAXCOVERAGE keeps small saturated details); every
-    frame after the first stores only changed pixels, the rest transparent."""
-    pal = frames[0].quantize(colors=255, method=Image.Quantize.MAXCOVERAGE)
+    """One 255-colour palette for the whole loop (MAXCOVERAGE keeps small
+    saturated details); every frame after the first stores only changed
+    pixels, the rest transparent."""
+    picks = frames[:: max(1, len(frames) // 8)][:8]      # palette must cover colours from the whole loop
+    montage = Image.new("RGB", (frames[0].width, frames[0].height * len(picks)))
+    for i, fr in enumerate(picks):
+        montage.paste(fr, (0, i * fr.height))
+    pal = montage.quantize(colors=255, method=Image.Quantize.MAXCOVERAGE)
     idx = [np.asarray(fr.quantize(palette=pal, dither=Image.Dither.NONE)) for fr in frames]
     out = []
     for i, a in enumerate(idx):
@@ -262,18 +285,28 @@ def main():
     t0 = time.time()
     stats = github.load(LOGIN, refresh=not args.offline)
     w = T.generate(SEED)
-    static, hab = build_world(w, random.Random(SEED))
-    state = (None if args.fresh else sim.load(STATE)) or sim.new_state(SEED, hab)
-    world = sim.Sim(state, hab)
+    lang = stats["top_language"] if stats else None
+    streak = stats["current_streak"] if stats else 0
     energy, flies = environment(stats)
+    state = None if args.fresh else sim.load(STATE)
     for night in range(args.nights):
-        world.new_day(energy, flies)
+        # rebuild the meadow each night: sustained activity can sprout new bushes
+        static, hab = build_world(w, random.Random(SEED), state.get("bushes", 2) if state else 2, lang)
+        state = state or sim.new_state(SEED, hab)
+        world = sim.Sim(state, hab)
+        world.new_day(energy, flies, streak)
+        if state["bushes"] != len(hab.bushes):
+            static, hab = build_world(w, random.Random(SEED), state["bushes"], lang)
+            world = sim.Sim(state, hab)
         last = night == args.nights - 1
         snaps = world.run(sim.DAY_TICKS, record=FRAMES if last else 0)
     sim.save(state, STATE)
 
-    hud = make_hud(stats, world.summary())
-    frames = [R.render(static.merged(dynamic(w, snap, f)), SIZE, ORIGIN, f, hud) for f, snap in enumerate(snaps)]
+    info = world.summary()
+    hud = make_hud(stats, info)
+    fog, dim = {"fog": (0.35, 0.95), "rain": (0.08, 0.8)}.get(info["weather"], (0.0, 1.0))
+    frames = [R.render(static.merged(dynamic(w, snap, f, info["weather"], info["event"])), SIZE, ORIGIN, f, hud,
+                       fog, dim) for f, snap in enumerate(snaps)]
     OUT.mkdir(exist_ok=True)
     frames[0].save(OUT / "preview.png", optimize=True)
     save_gif(frames, OUT / "catopia.gif")

@@ -143,7 +143,7 @@ def berry_bush(seed):
     return v
 
 
-def flowers(seed):
+def flowers(seed, palette=P.FLOWERS):
     rng = random.Random(seed)
     v = {}
     for _ in range(rng.randint(2, 4)):
@@ -152,7 +152,7 @@ def flowers(seed):
             v[(a, b, 0)] = shade(P.GRASS_SIDE, 0.9)
         else:
             v[(a, b, 0)] = P.STEM
-            v[(a, b, 1)] = rng.choice(P.FLOWERS)
+            v[(a, b, 1)] = rng.choice(palette)
     return v
 
 
