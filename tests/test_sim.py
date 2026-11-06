@@ -91,6 +91,29 @@ def test_activity_grows_new_bushes_up_to_four():
     assert s.s["bushes"] == 4 and any("berry bush" in e for e in s.s["events"])
 
 
+def test_stars_and_repos_trigger_events():
+    s = sim.Sim(fresh(), HAB)
+    s.new_day(0.5, 10)
+    s.github_events(stars=1, repos=15)          # first sighting = baseline, no events
+    assert not s.s["starfall"] and s.s["dens"] == 0
+    s.new_day(0.5, 10)
+    s.github_events(stars=3, repos=17)
+    assert s.s["starfall"] and s.s["dens"] == 2
+    s.new_day(0.5, 10)
+    s.github_events(stars=3, repos=30)          # dens cap at 3; no new stars, no starfall
+    assert not s.s["starfall"] and s.s["dens"] == 3
+
+
+def test_tired_cats_use_beds():
+    _, hab = run.build_world(W, random.Random(run.SEED), 2, None, 2)
+    s = sim.Sim(sim.new_state(run.SEED, hab), hab)
+    s.new_day(0.5, 10)
+    for c in s.cats:
+        c["energy"] = 0.05
+    snap = s.run(200, record=1)[0]
+    assert sum(c["lift"] > 0 for c in snap["cats"]) >= 2, snap["cats"]   # on the cushion / in a box den
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

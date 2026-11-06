@@ -46,7 +46,7 @@ jobs:
       - name: Publish to the output branch (single commit, no history bloat)
         run: |
           pub=$(mktemp -d)
-          cp output/catopia.gif output/preview.png data/github.json data/state.json "$pub"/
+          cp output/catopia.gif output/preview.png output/lineage.md data/github.json data/state.json "$pub"/
           git config user.name "mohid3009"
           git config user.email "74285830+mohid3009@users.noreply.github.com"
           git checkout --orphan output

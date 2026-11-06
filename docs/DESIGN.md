@@ -101,6 +101,15 @@ Rejected options:
     lantern festival with paper lanterns rising, where cats seek each other's
     company.
   - **Top language** colours the meadow's flowers (Python: yellow and blue).
+  - **New stars**: each one adds a golden koi to the pond for good (up to 5),
+    and the night it arrives has a starfall of gold sparkles.
+  - **New repos**: each one adds a cardboard-box den (up to 3). Dens are new
+    beds; a tired cat picks the nearest free one (cushion or den) and is drawn
+    asleep inside it. The first run records your current stars and repos as a
+    baseline, so nothing fires for what already existed.
+- **Family tree**: every run publishes `lineage.md` on the `output` branch
+  with living cats and their traits, the full lineage tree from the founders,
+  and recent events.
 - **Weather** is rolled each night: about 70% clear, 15% fog and 15% rain.
   - **Fog** mists the back of the scene, and cats stay near home.
   - **Rain** dims the light and adds falling streaks. Cats explore less and nap
@@ -111,6 +120,8 @@ Rejected options:
   - population stays between 2 and 4, with births and deaths
   - genes change behaviour
   - rain keeps cats in
+  - stars and repos trigger events
+  - tired cats use beds
   - activity grows bushes
   - banner size and deterministic rendering
   - cats actually drawn

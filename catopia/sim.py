@@ -57,12 +57,12 @@ class Habitat:
     """Static facts the agents rely on. Points of interest are
     (stand_tile, facing) pairs."""
 
-    def __init__(self, walkable, shore, bowl, cushion, bushes):
+    def __init__(self, walkable, shore, bowl, beds, bushes):
         self.walkable = set(walkable)
         self.tiles = sorted(self.walkable)
         self.shore = shore
         self.bowl = bowl
-        self.cushion = cushion
+        self.beds = beds              # [(stand_tile, facing, display_xy, lift)]: cushion, box dens
         self.bushes = bushes          # {tile_key: (stand_tile, facing)}
 
     def path(self, a, b):
@@ -131,7 +131,8 @@ class Sim:
     def __init__(self, state, hab):
         self.s = state
         self.hab = hab
-        for k, v in (("weather", "clear"), ("event", None), ("growth", 0.0), ("bushes", 2)):
+        for k, v in (("weather", "clear"), ("event", None), ("growth", 0.0), ("bushes", 2), ("dens", 0),
+                     ("starfall", False)):
             state.setdefault(k, v)    # saves from older versions
         for k in hab.bushes:      # bushes that sprouted since the last run
             state["res"]["berries"].setdefault(k, 2)
@@ -186,6 +187,21 @@ class Sim:
 
         s["flies"] = [[t[0] + rng.random(), t[1] + rng.random(), rng.uniform(0.8, 2.2), rng.randrange(14)]
                       for t in rng.sample(self.hab.tiles, min(flies, len(self.hab.tiles)))]
+
+    def github_events(self, stars, repos):
+        """Call after new_day. New stars -> a starfall night (golden koi are drawn
+        from the star count); new repos -> a cardboard-box den, up to 3.
+        The first sighting only records a baseline: no retroactive events."""
+        s = self.s
+        seen = s.setdefault("seen", {"stars": stars, "repos": repos})
+        new_stars, new_repos = max(0, stars - seen["stars"]), max(0, repos - seen["repos"])
+        seen.update(stars=max(seen["stars"], stars), repos=max(seen["repos"], repos))
+        s["starfall"] = new_stars > 0
+        if new_stars:
+            self.log(f"a starfall for {new_stars} new GitHub star" + ("s" if new_stars > 1 else ""))
+        if new_repos and s["dens"] < 3:
+            s["dens"] = min(3, s["dens"] + new_repos)
+            self.log("a new box den appeared for a new repo")
 
     def _breed(self, rng, energy):
         if len(self.cats) >= MAX_CATS:
@@ -286,11 +302,13 @@ class Sim:
         if kind == "drink":
             stand, face = min(self.hab.shore + [self.hab.bowl], key=lambda p: self._dist(c, p[0]))
             return self._go(c, "drink", stand, face, 30)
-        if kind == "sleep":
-            taken = any(o is not c and o["act"] and o["act"]["kind"] == "sleep" and tuple(o["act"]["stand"]) ==
-                        tuple(self.hab.cushion[0]) for o in self.cats)
-            if not taken and self._dist(c, self.hab.cushion[0]) < 14:
-                return self._go(c, "sleep", *self.hab.cushion, 2000)
+        if kind == "sleep":   # nearest free bed (cushion or a box den), else curl up right here
+            taken = {tuple(o["act"]["stand"]) for o in self.cats
+                     if o is not c and o["act"] and o["act"]["kind"] == "sleep"}
+            beds = [i for i, b in enumerate(self.hab.beds) if tuple(b[0]) not in taken and self._dist(c, b[0]) < 14]
+            if beds:
+                i = min(beds, key=lambda i: self._dist(c, self.hab.beds[i][0]))
+                return self._go(c, "sleep", self.hab.beds[i][0], self.hab.beds[i][1], 2000, bed=i)
             return self._go(c, "sleep", here, c["facing"], 2000)
         if kind == "social":
             o = min(awake, key=lambda o: (o["x"] - c["x"]) ** 2 + (o["y"] - c["y"]) ** 2)
@@ -418,12 +436,14 @@ class Sim:
                 overlay = "heart"
             elif arrived and a.get("kind") == "eat" and a.get("catch"):
                 overlay = "fish"
-            on_cushion = c["pose"] == "sleep" and a.get("stand") == list(self.hab.cushion[0])
-            cats.append({"id": c["id"], "x": c["x"], "y": c["y"], "pose": c["pose"], "facing": tuple(c["facing"]),
-                         "genes": c["genes"], "kitten": c["age"] < ADULT_AGE, "overlay": overlay,
-                         "lift": 0.25 if on_cushion else 0})
+            x, y, lift = c["x"], c["y"], 0
+            if c["pose"] == "sleep" and a.get("bed") is not None and a["bed"] < len(self.hab.beds):
+                (x, y), lift = self.hab.beds[a["bed"]][2:]   # drawn on the cushion / inside the box
+            cats.append({"id": c["id"], "x": x, "y": y, "pose": c["pose"], "facing": tuple(c["facing"]),
+                         "genes": c["genes"], "kitten": c["age"] < ADULT_AGE, "overlay": overlay, "lift": lift})
         return {"tick": self.s["tick"], "cats": cats, "flies": [list(f) for f in self.s["flies"]]}
 
     def summary(self):
         return {"day": self.s["day"], "cats": len(self.cats), "gen": max((c["gen"] for c in self.cats), default=0),
-                "weather": self.s.get("weather", "clear"), "event": self.s.get("event")}
+                "weather": self.s.get("weather", "clear"), "event": self.s.get("event"),
+                "starfall": self.s.get("starfall", False)}

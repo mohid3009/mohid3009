@@ -248,9 +248,9 @@ def glow_shroom(seed):
     return v
 
 
-def koi(seed):
-    c = P.KOI[seed % 3]
-    return {(0, 0, 0): c, (1, 0, 0): c, (-1, 0, 0): P.KOI[(seed + 1) % 3]}
+def koi(seed, color=None):
+    c = color or P.KOI[seed % 3]
+    return {(0, 0, 0): c, (1, 0, 0): c, (-1, 0, 0): color or P.KOI[(seed + 1) % 3]}
 
 
 def lily(seed):

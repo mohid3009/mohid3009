@@ -46,7 +46,7 @@ def dominant(dx, dy):
 
 
 # --- static scenery + the habitat the agents live in ------------------------
-def build_world(w, rng, n_bushes=2, lang=None):
+def build_world(w, rng, n_bushes=2, lang=None, n_dens=0):
     scene, shadow, trees, blocked = R.Scene(), {}, [], set()
     hx, hy = w.house
     pad = {(i, j) for i in range(hx - 1, hx + 3) for j in range(hy - 1, hy + 3)}
@@ -102,10 +102,26 @@ def build_world(w, rng, n_bushes=2, lang=None):
             blocked.add((x, y))
             scene.model(M.berry_bush(h32(x, y)), x + 0.5, y + 0.5, w.H[x, y], 0.25)
 
+    dens, keep = [], set()  # cardboard-box dens, one per new repo (sleep spots)
+    for x, y in cells:
+        if len(dens) >= n_dens:
+            break
+        foot = [(x + i, y + j) for i in range(3) for j in range(2)]
+        front = (x + 1, y + 2)
+        # the box may sit at the band's back edge; only its entrance must be in the cats' territory
+        ok = x + 3 < w.n and y + 3 < w.n and on_screen(w, front) and on_screen(w, (x + 1, y), 13) and all(
+            w.land(*t) and t not in blocked | clearing and w.H[t] == w.H[x, y] and w.top[t] == "grass"
+            for t in foot + [front])
+        if ok and all(abs(x - a) + abs(y - b) > 4 for a, b in dens + bushes):
+            dens.append((x, y))
+            blocked |= set(foot)
+            keep.add(front)
+            scene.model(M.cardboard_box(), x, y, w.H[x, y], 0.25, centered=False)
+
     flower_colors = P.LANG_FLOWERS[lang] + [P.FLOWERS[3]] if lang in P.LANG_FLOWERS else P.FLOWERS
     shrooms = 0
     for x, y in cells:  # small props on tiles nobody uses
-        if (x, y) in blocked or (x, y) == cushion or not w.land(x, y) or w.top[x, y] not in ("grass", "stone"):
+        if (x, y) in blocked | keep or (x, y) == cushion or not w.land(x, y) or w.top[x, y] not in ("grass", "stone"):
             continue
         r = rng.random()
         z = w.H[x, y]
@@ -136,14 +152,16 @@ def build_world(w, rng, n_bushes=2, lang=None):
     stand_by = lambda t: next(((t[0] + dx, t[1] + dy), (-dx, -dy)) for dx, dy in sim.DIRS
                               if (t[0] + dx, t[1] + dy) in walk)
     shore = [(t, d) for t in sorted(walk) for d in sim.DIRS if w.water[t[0] + d[0], t[1] + d[1]]]
-    hab = sim.Habitat(walk, shore, ((hx + 3, hy + 1), (-1, 0)), (cushion, (0, 1)),
+    beds = [(cushion, (0, 1), (cushion[0] + 0.5, cushion[1] + 0.5), 0.25)]
+    beds += [((x + 1, y + 2), (1, 0), (x + 1.125, y + 0.75), 0.25) for x, y in dens if (x + 1, y + 2) in walk]
+    hab = sim.Habitat(walk, shore, ((hx + 3, hy + 1), (-1, 0)), beds,
                       {f"{x},{y}": stand_by((x, y)) for x, y in bushes})
     assert cushion in walk and (hx + 3, hy + 1) in walk and shore, "layout lost a point of interest"
     return scene, hab
 
 
 # --- per frame ---------------------------------------------------------------
-def dynamic(w, snap, f, weather="clear", event=None):
+def dynamic(w, snap, f, weather="clear", event=None, golden=0, starfall=False):
     s = R.Scene()
     marks = []
     for c in snap["cats"]:
@@ -163,11 +181,13 @@ def dynamic(w, snap, f, weather="clear", event=None):
     mx = sum(p[0] for p in pond) / len(pond) + 0.5
     my = sum(p[1] for p in pond) / len(pond) + 0.5
     a = f / FRAMES * 2 * math.pi
-    for i, sgn in enumerate((1, -1)):
-        b = sgn * a + i * math.pi
-        kx, ky = mx + 1.3 * math.cos(b), my + 1.3 * math.sin(b)
+    fish = [(1, 1.3, 0, None), (-1, 1.3, math.pi, None)]       # two koi, plus one golden koi per star
+    fish += [((-1) ** i, 0.7 + 0.35 * (i % 3), 1 + i * 1.3, P.GOLD) for i in range(golden)]
+    for i, (sgn, r, ph, color) in enumerate(fish):
+        b = sgn * a + ph
+        kx, ky = mx + r * math.cos(b), my + r * math.sin(b)
         if w.water[int(kx), int(ky)]:
-            s.model(M.koi(i), kx, ky, w.wl - 0.2, 0.25, dominant(-sgn * math.sin(b), sgn * math.cos(b)))
+            s.model(M.koi(i, color), kx, ky, w.wl - 0.2, 0.25, dominant(-sgn * math.sin(b), sgn * math.cos(b)))
 
     flies = snap["flies"]
 
@@ -198,6 +218,16 @@ def dynamic(w, snap, f, weather="clear", event=None):
                     d.point((lx + gx, ly + gy), fill=shade(P.LAMP, 0.6))   # soft glow
                 d.rectangle([lx - 1, ly - 1, lx + 2, ly + 3], fill=P.LAMP)
                 d.rectangle([lx, ly, lx + 1, ly + 1], fill=P.CREAM)
+        if starfall:   # sparkles drifting down on a night that brought new stars
+            rng = random.Random(frame // 2)
+            for i in range(9):
+                sx0 = (i * 53 + 17) % SIZE[0]
+                sy0 = int((frame * 0.9 + i * 23) % (band + 10)) - 5
+                d.point((sx0, sy0), fill=P.GOLD)
+                d.point((sx0 + 1, sy0 - 1), fill=shade(P.GOLD, 0.6))
+                if rng.random() < 0.5:
+                    for ddx, ddy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                        d.point((sx0 + ddx, sy0 + ddy), fill=shade(P.GOLD, 0.45))
         if weather == "rain":
             rng = random.Random(frame)
             for _ in range(70):
@@ -231,6 +261,7 @@ def make_hud(stats, world):
         d.line([(0, top), (W - 1, top)], fill=P.PANEL_EDGE)
         extra = [world["weather"].upper()] if world["weather"] != "clear" else []
         extra += [{"festival": "LANTERN FESTIVAL", "swarm": "FIREFLY SWARM"}[world["event"]]] if world["event"] else []
+        extra += ["STARFALL"] if world.get("starfall") else []
         info = " · ".join([f"NIGHT {world['day']}", f"GEN {world['gen']}", f"{world['cats']} CATS"] + extra)
         R.text(d, W - 8 - R.text_width(info), top + 3, info, P.DIM)
         if not stats:
@@ -268,6 +299,45 @@ def save_gif(frames, path):
                 transparency=255, disposal=1, optimize=False)
 
 
+def lineage_md(state):
+    """Family tree + living roster + recent events, published next to the GIF."""
+    lin, alive = state["lineage"], {str(c["id"]) for c in state["cats"]}
+    kids = {}
+    for cid, v in lin.items():
+        if v["parents"]:
+            kids.setdefault(str(v["parents"][0]), []).append(cid)
+
+    def tag(cid):
+        v = lin[cid]
+        life = f"nights {v['born']}-{v['died']}" if v["died"] else ("alive" if cid in alive else "?")
+        other = [lin[str(p)]["name"] for p in v["parents"][1:] if str(p) in lin]
+        g = v["genes"]
+        return (f"**{v['name']}** · gen {v['gen']} · {sim.G.personality(g)} · {g['fur']} {g['pattern']} · {life}"
+                + (f" · with {other[0]}" if other else ""))
+
+    def tree(cid, depth):
+        yield "  " * depth + "- " + tag(cid)
+        for k in sorted(kids.get(cid, []), key=int):
+            yield from tree(k, depth + 1)
+
+    gen = max((c["gen"] for c in state["cats"]), default=0)
+    out = ["# CATOPIA family tree", "",
+           f"Night {state['day']} · generation {gen} · {len(state['cats'])} cats alive", "",
+           "## Living cats", "",
+           "| cat | gen | age | personality | curiosity | sociability | speed | efficiency |",
+           "|---|---|---|---|---|---|---|---|"]
+    for c in state["cats"]:
+        g = c["genes"]
+        out.append(f"| {c['name']} | {c['gen']} | {c['age']} nights | {sim.G.personality(g)} | "
+                   f"{g['curiosity']:.2f} | {g['sociability']:.2f} | {g['speed']:.2f} | {g['efficiency']:.2f} |")
+    out += ["", "## Lineage", ""]
+    for cid, v in lin.items():
+        if not v["parents"]:
+            out += list(tree(cid, 0))
+    out += ["", "## Recent events", ""] + [f"- {e}" for e in reversed(state["events"][-15:])]
+    return "\n".join(out) + "\n"
+
+
 def environment(stats):
     """Recent GitHub activity -> food/fish/berry refill and firefly count.
     Without stats the world still runs on its baseline."""
@@ -290,13 +360,17 @@ def main():
     energy, flies = environment(stats)
     state = None if args.fresh else sim.load(STATE)
     for night in range(args.nights):
-        # rebuild the meadow each night: sustained activity can sprout new bushes
-        static, hab = build_world(w, random.Random(SEED), state.get("bushes", 2) if state else 2, lang)
+        # rebuild the meadow each night: activity can sprout bushes, new repos add dens
+        grown = lambda st: (st.get("bushes", 2), st.get("dens", 0)) if st else (2, 0)
+        static, hab = build_world(w, random.Random(SEED), grown(state)[0], lang, grown(state)[1])
         state = state or sim.new_state(SEED, hab)
         world = sim.Sim(state, hab)
+        before = grown(state)
         world.new_day(energy, flies, streak)
-        if state["bushes"] != len(hab.bushes):
-            static, hab = build_world(w, random.Random(SEED), state["bushes"], lang)
+        if stats:
+            world.github_events(stats["stars"], stats["repos"])
+        if grown(state) != before:
+            static, hab = build_world(w, random.Random(SEED), grown(state)[0], lang, grown(state)[1])
             world = sim.Sim(state, hab)
         last = night == args.nights - 1
         snaps = world.run(sim.DAY_TICKS, record=FRAMES if last else 0)
@@ -305,11 +379,13 @@ def main():
     info = world.summary()
     hud = make_hud(stats, info)
     fog, dim = {"fog": (0.35, 0.95), "rain": (0.08, 0.8)}.get(info["weather"], (0.0, 1.0))
-    frames = [R.render(static.merged(dynamic(w, snap, f, info["weather"], info["event"])), SIZE, ORIGIN, f, hud,
-                       fog, dim) for f, snap in enumerate(snaps)]
+    golden = min(5, stats["stars"]) if stats else 0
+    frames = [R.render(static.merged(dynamic(w, snap, f, info["weather"], info["event"], golden, info["starfall"])),
+                       SIZE, ORIGIN, f, hud, fog, dim) for f, snap in enumerate(snaps)]
     OUT.mkdir(exist_ok=True)
     frames[0].save(OUT / "preview.png", optimize=True)
     save_gif(frames, OUT / "catopia.gif")
+    (OUT / "lineage.md").write_text(lineage_md(state), encoding="utf-8")
 
     print(f"night {state['day']}: " + ", ".join(
         f"{c['name']} (gen {c['gen']}, {c['age']}n, {sim.G.personality(c['genes'])})" for c in state["cats"]))
